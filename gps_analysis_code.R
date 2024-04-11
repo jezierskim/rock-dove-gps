@@ -3,7 +3,11 @@
 ### William J. Smith, Stephen Portugal, Michał T. Jezierski.
 ## Versioned by MTJ 4th April 2024.
 
-### Working directory and necessary packages. ####
+### 1 == SET UP THE DIRECTORY, LOAD PACKAGES AND DATASETS REQUIRED. ####################################
+#### SET WORKING DIRECTORY. ##
+setwd('~/Desktop/rock doves/gps_folder/')
+
+#### PACKAGES NEEDED. ##
 library(tidyverse)
 library(sf)
 library(lubridate)
@@ -12,43 +16,76 @@ library(cowplot)
 library(adehabitatHR)
 library(cowplot)
 library(units)
-sf_use_s2(F)
 
-setwd('~/Desktop/rock doves/gps_folder/')
+sf_use_s2(F) # also turn of spherical geometry for sf.
 
-
-#### LOAD IN DATASETS PREPARED IN gps_data_code.R ====
-## TO WILL: The directory in the shared folder is 'bin/'.
-gps <- st_read('bin/filtered_gps_habitat_dataset.gpkg') %>%
-  mutate(date = as.Date((format(as.POSIXct(datetime), "%Y-%m-%d")))) # the filtered gps dataset.
-clachan_base <- st_read('bin/clachan_base.gpkg') # base grey map for Clachan.
-clachan_habitat <- st_read('bin/clachan_new_habitat.gpkg') # habitat shapefile.
-load('sat_map_clachan.RData') # Satellite map, all three lines below.
+#### LOAD IN THE DATASET. ##
+## Data as prepared in the file 'gps_data_code.R'.
+gps <- st_read('bin/filtered_gps_habitat_dataset.gpkg') %>% # the filtered dataset; see file above and METHODS.
+  mutate(date = as.Date((format(as.POSIXct(datetime), "%Y-%m-%d")))) # reformat date so it can be used more easily.
+clachan_base <- st_read('bin/clachan_base.gpkg') # base map of the study area.
+clachan_habitat <- st_read('bin/clachan_new_habitat.gpkg') # habitat map of the study area.
+load('sat_map_clachan.RData') # loading satellite map of the study area; execute all three lines.
 clachan_sat <- map
-rm(map)
+rm(map) # map loaded correctly by this point.
 
-#### RESULTS SECTION 1 - GENERAL STATISTICS REGARDING POINTS ====
 
-## How many tracking days do we have across pigeons?
-gps %>% st_drop_geometry() %>% # remove geometry
-  group_by(name) %>% # across all pigeon dates.
+
+
+### 2 == GENERAL STATISTICS; DISTANCE TRAVELLED ####################################
+
+#### HOW MANY TRACKING DAYS ACROSS THE DATASET? ##
+gps %>% st_drop_geometry() %>% # take the dataset; remove geometry (not needed for calculations).
+  group_by(name) %>% # group across all individual rock doves.
   summarise(start_date = min(date), end_date = max(date)) %>% # summarise the minimum and maximum date.
-  mutate(date_range = end_date - start_date) %>% # calculate the date range.
+  mutate(date_range = (end_date - start_date)+1) %>% # calculate the date range.
   print() %>% # print it for each pigeon name.
-  summarise(mean = mean(date_range), sd = sd(date_range)) # and across all name, give mean and SD.
+  summarise(mean = mean(date_range), sd = sd(date_range)) # and across all rock dove name, give mean and SD.
 
-## Estimate home range
-# Using adehabitatHR core functions.
+### HOW FAR DID EACH ROCK DOVE TRAVEL PER DAY? ##
+### FIRST: calculate the total daily movement of each Rock Dove.
+gps_dist <- gps %>% 
+  group_by(name, date) %>% # per pigeon and date
+  mutate(
+    lead = geom[row_number() + 1], # create a lead variable for calculation
+    dist = st_distance(geom, lead, by_element = T)) %>% # calculate the distance between the current point and the next one. 
+  drop_units() %>% # remove units (obstruct calculations)
+  st_drop_geometry() %>% # drop geometry (not needed)
+  drop_na(dist) %>% # drop empty rows which result from adding lead to the last observation per grouping.
+  summarise(total = sum(dist)) # summarise distance 
+
+### SECOND: calculate the mean and standard deviation for each Rock Dove
+gps_dist %>% group_by(name) %>% summarise(mean_dist = mean(total), sd_dist = sd(total)) %>% print()
+
+figS1 <- ggplot(data = gps_dist, aes(x = name, y = total)) + ggdist::stat_halfeye(justification = -.2, point_colour = NA, .width = 0) +
+  geom_point(size = 1, position = position_nudge(x = -.2)) + 
+  stat_summary(fun.data=mean_sdl, fun.args = list(mult=1), 
+               geom="errorbar", color="red", width = 0.1) +
+  stat_summary(fun.y=mean, geom="point", color="red", size = 2) +
+  theme_bw() +
+  scale_y_continuous(name = 'Total distance travelled per day (m)') +
+  scale_x_discrete(name = 'Rock Dove ID') +
+  theme(panel.grid = element_blank())
+
+ggsave(figS1, path = 'figs/', filename = 'FIGS1.png', dpi = 300, width = 7, height = 4.5, units = 'in')
+
+
+### 3 == HOME RANGES ####################################
+### FIRST: Estimate Rock Dove home ranges. 
+## Using adehabitatHR core functions; there are two calculations: one based on fixed-kernel utilisation distribution
+## the other is based on minimum convex polygon
 spatial_gps <- gps %>% dplyr::select(name) %>% as_Spatial() # turn the observations into spatial (other data format)
-spatial_gps$name <- as.factor(spatial_gps$name) # make names as factors as required for the analysis
+spatial_gps$name <- as.factor(spatial_gps$name) # make names as factors as required for the analysis.
+
+## Calculate fixed kernel utilisation distribution.
 kud <- kernelUD(spatial_gps, h="href") # estimates of Kernel Home-Range
 (ver_95 <- getverticeshr(kud, 95)) # extract the 95% contour of home range
 (ver_50 <- getverticeshr(kud, 50)) # extract the 50% contour of home range
-(mcp_50 <- mcp(spatial_gps, 50))
-(mcp_95 <- mcp(spatial_gps, 95))
 
+## Calculate minimum convex polygon.
+(mcp_100 <- mcp(spatial_gps, 100))
 
-## Summary of pigeon tracking data 
+## Summary of pigeon tracking data, including the different home ranges.
 options(pillar.sigfig = 2) # forces significant figures.
 gps %>% st_drop_geometry() %>% # drop geometry
   group_by(name) %>% # across all pigeon names
@@ -56,37 +93,41 @@ gps %>% st_drop_geometry() %>% # drop geometry
   mutate(date_range = end_date - start_date) %>% 
   mutate(sex = c('Male', 'Male', 'Male', 'Female (?)', 'Female'), # add bonus information
          age = c('Adult', 'Adult', 'Adult', 'Adult', 'Adult'),
-         home_50_ha = num(c(5.485856, 34.322273, 14.104215, 78.748625, 6.729580), digits = 3), # add data from HR estimation.
-         home_95_ha = num(c(68.37009, 134.09548, 62.03079, 308.29462, 38.66206), digits = 3)) %>%
+         home_ud_50_ha = num(c(5.485856, 34.322273, 14.104215, 78.748625, 6.729580), digits = 3), # add data from HR estimation.
+         home_ud_95_ha = num(c(68.37009, 134.09548, 62.03079, 308.29462, 38.66206), digits = 3),
+         home_mcp_100_ha = num(c(218.68409, 129.18426, 34.62694, 206.07421, 56.46548), digits = 3)) %>%
   print() %>%
-  summarise(mean_50 = mean(home_50_ha), sd_50 = sd(home_50_ha), mean_95 = mean(home_95_ha), sd_95 = sd(home_95_ha))
+  summarise(mean_ud_50 = mean(home_ud_50_ha), sd_ud_50 = sd(home_ud_50_ha), mean_ud_95 = mean(home_ud_95_ha), sd_ud_95 = sd(home_ud_95_ha),
+            mean_mcp_100 = mean(home_mcp_100_ha), sd_mcp_100 = sd(home_mcp_100_ha))
 
-## Compare pigeon home ranges but focusing on convex polygons.
-# What are the means and sds of the data?
-mean(mcp_50$area)
-sd(mcp_50$area)
-mean(mcp_95$area)
-sd(mcp_95$area)
 
-# Data from other papers
+## SECOND: compare Rock Dove ranges to data from Rose et al. 2006 (MCP) and Carlson et al. 2011 (UD)
+### DATA FROM ROSE ET AL. 2006:
 rose_data <- c(2.9, 2.9, 3.2, 5.1, 5.2,12.5, 14.8, 16.3, 24.2, 46.7, 144.1, 150.6)
 mean(rose_data)
 sd(rose_data)
-wilcox.test(rose_data, mcp_95$area)
+wilcox.test(rose_data, mcp_100$area)
 
-# Get populations level mcp as well?
+### DATA FROM CARLSON ET AL. 2011
+carlson_data <- c(9.263, 0.015, 0.194, 0.148, 0.619, 1.385, 0.055, 0.037, 1.233, 0.153, 14.926, 16.830, 8.748, 3.323)
+carlson_data <- carlson_data*100 # convert to hectares from km2.
+mean(carlson_data)
+sd(carlson_data)
+wilcox.test(carlson_data, mcp_100$area)
 
-
-##### FIGURE 1 - OVERALL MOVEMENT OF PIGEONS THROUGH LANDSCAPE.
+### 4 == FIGURE 2 - MOVEMENT OF ROCK DOVES THROUGH LANDSCAPE ####################################
+### GPS dataset needs to be fully compatible with WGS coordinate system.
 gps_wgs_coords <- gps %>% # create a dataset with X/Y rather than geometry coordinates.
   st_transform(crs = st_crs(4326)) %>% # must recreate coordinates for lon/lat projections
   st_coordinates() %>% # # extract coordinates
   as.data.frame() %>% # as data frame
   mutate(name = gps$name, datetime = gps$datetime) # add name and datetime columns
 
+### Load inset North Uist map.
 inset_nu <- st_read('bin/GBR_adm0.shp') %>% # shapefile from https://www.diva-gis.org/gdata
   st_crop(xmin = -7.577820, ymin = 57.464158, xmax = -7.009277, ymax = 57.747412) # crop to NUist box
 
+### Create the map of North Uist.
 (inset_nu_map <- ggplot() + 
   geom_sf(data = inset_nu) + # add sf object called inse nu
   geom_rect(aes(xmin = -7.280598, 
@@ -99,7 +140,8 @@ inset_nu <- st_read('bin/GBR_adm0.shp') %>% # shapefile from https://www.diva-gi
         axis.text = element_blank(),
         axis.title = element_blank()))
 
-(fig1A <- ggmap(clachan_sat) + 
+### Create Figure 1A to which the inset will be added.
+(fig2A <- ggmap(clachan_sat) + 
   geom_point(data = gps_wgs_coords, aes(x = X, y = Y, col = name), size = 0.3) + # add points
   geom_path(data = gps_wgs_coords, aes(x = X, y = Y, col = name), size = 0.3) + # add paths
   xlab('Longitude (°)') + ylab('Latitude (°)') + # plot labels
@@ -113,13 +155,13 @@ inset_nu <- st_read('bin/GBR_adm0.shp') %>% # shapefile from https://www.diva-gi
   geom_text(aes(x = -7.29, y = 57.684), label = 'N', col = 'white', size = 14/.pt) + # add the north label
   coord_cartesian())
 
-(fig1 <- ggdraw() + # code joining the two figures
+(fig2 <- ggdraw() + # code joining the two figures
   draw_plot(fig1A) +
   draw_plot(inset_nu_map, x = 0.79, y = 0.1, width = 0.25, height = 0.25))
 
-ggsave(fig1, path = 'figs/', filename = 'FIG1.png', dpi = 300, width = 7, height = 4.5, units = 'in')
+ggsave(fig2, path = 'figs/', filename = 'FIG2.png', dpi = 300, width = 7, height = 4.5, units = 'in')
 
-##### FIGURE S1-S5 - MOVEMENT OF EACH PIGEON AND HOME RANGE.
+### 5 == FIGURE S2-S6 - MOVEMENT OF EACH PIGEON AND HOME RANGE. #################################### 
 ## Need to obtain polygons of home ranges first.
 kud_names <- names(kud) # define names from the estimation.
 d_95 <- lapply(kud, function(x) try(getverticeshr(x, 95))) # extract home ranges at 95%
@@ -142,7 +184,7 @@ sdf_d_50 <- fortify(sdf_d_50)
 
 #### FIGURES1 - EA49502.
 ## Plot as above repeated with each polygon recreated.
-(figS1A <- ggmap(clachan_sat) + 
+(figS2A <- ggmap(clachan_sat) + 
     geom_point(data = gps_wgs_coords %>% filter(name == 'EA49502'), aes(x = X, y = Y, col = name), size = 0.3) + 
     geom_path(data = gps_wgs_coords %>% filter(name == 'EA49502'), aes(x = X, y = Y, col = name), size = 0.3) +
     geom_polygon(data = sdf_d_50 %>% filter(id == 'homerange'), aes(x = long, y = lat, fill = id, group = group), col = 'red', alpha = 0.6) +
@@ -160,7 +202,7 @@ sdf_d_50 <- fortify(sdf_d_50)
     theme(
           axis.title = element_blank(),
           legend.position = 'none'))
-(figS1B <- ggmap(clachan_sat) + 
+(figS2B <- ggmap(clachan_sat) + 
     geom_point(data = gps_wgs_coords %>% filter(name == 'EA49502'), aes(x = X, y = Y, col = name), size = 0.3) + 
     geom_path(data = gps_wgs_coords %>% filter(name == 'EA49502'), aes(x = X, y = Y, col = name), size = 0.3) +
     geom_polygon(data = sdf_d_95 %>% filter(id == 'homerange'), aes(x = long, y = lat, fill = id, group = group), col = 'red', alpha = 0.6) +
@@ -179,12 +221,12 @@ sdf_d_50 <- fortify(sdf_d_50)
           axis.title = element_blank(),
           legend.position = 'none'))
 
-(figS1 <- plot_grid(figS1A, figS1B, labels = c('A)', 'B)'), label_fontfamily = 'serif', label_size = 10))
-ggsave(figS1, path = 'figs/', filename = 'FIGS1.png', dpi = 300, width = 9, height = 4.5, units = 'in')
+(figS2 <- plot_grid(figS2A, figS2B, labels = c('A)', 'B)'), label_fontfamily = 'serif', label_size = 10))
+ggsave(figS2, path = 'figs/', filename = 'figS2.png', dpi = 300, width = 9, height = 4.5, units = 'in')
 
 #### FIGURE S2 - EA49503.
 
-(figS2A <- ggmap(clachan_sat) + 
+(figS3A <- ggmap(clachan_sat) + 
     geom_point(data = gps_wgs_coords %>% filter(name == 'EA49503'), aes(x = X, y = Y), col = '#98993C', size = 0.3) + 
     geom_path(data = gps_wgs_coords %>% filter(name == 'EA49503'), aes(x = X, y = Y), col = '#98993C', size = 0.3) +
     geom_polygon(data = sdf_d_50 %>% filter(id == 'homerange1'), aes(x = long, y = lat, group = group), fill = '#98993C', col = '#98993C', alpha = 0.6) +
@@ -202,7 +244,7 @@ ggsave(figS1, path = 'figs/', filename = 'FIGS1.png', dpi = 300, width = 9, heig
     theme(
           axis.title = element_blank(),
           legend.position = 'none'))
-(figS2B <- ggmap(clachan_sat) + 
+(figS3B <- ggmap(clachan_sat) + 
     geom_point(data = gps_wgs_coords %>% filter(name == 'EA49503'), aes(x = X, y = Y), col = '#98993C', size = 0.3) + 
     geom_path(data = gps_wgs_coords %>% filter(name == 'EA49503'), aes(x = X, y = Y), col = '#98993C', size = 0.3) +
     geom_polygon(data = sdf_d_95 %>% filter(id == 'homerange1'), aes(x = long, y = lat, group = group), fill = '#98993C', col = '#98993C', alpha = 0.6) +
@@ -221,12 +263,12 @@ ggsave(figS1, path = 'figs/', filename = 'FIGS1.png', dpi = 300, width = 9, heig
           axis.title = element_blank(),
           legend.position = 'none'))
 
-(figS2 <- plot_grid(figS2A, figS2B, labels = c('A)', 'B)'), label_fontfamily = 'serif', label_size = 10))
-ggsave(figS2, path = 'figs/', filename = 'FIGS2.png', dpi = 300, width = 9, height = 4.5, units = 'in')
+(figS3 <- plot_grid(figS3A, figS3B, labels = c('A)', 'B)'), label_fontfamily = 'serif', label_size = 10))
+ggsave(figS3, path = 'figs/', filename = 'figS3.png', dpi = 300, width = 9, height = 4.5, units = 'in')
 
 #### FIGURE S3 - EA49568.
 
-(figS3A <- ggmap(clachan_sat) + 
+(figS4A <- ggmap(clachan_sat) + 
     geom_point(data = gps_wgs_coords %>% filter(name == 'EA49568'), aes(x = X, y = Y), col = '#39A783', size = 0.3) + 
     geom_path(data = gps_wgs_coords %>% filter(name == 'EA49568'), aes(x = X, y = Y), col = '#39A783', size = 0.3) +
     geom_polygon(data = sdf_d_50 %>% filter(id == 'homerange2'), aes(x = long, y = lat, group = group), fill = '#39A783', col = '#39A783', alpha = 0.6) +
@@ -244,7 +286,7 @@ ggsave(figS2, path = 'figs/', filename = 'FIGS2.png', dpi = 300, width = 9, heig
     theme(
           axis.title = element_blank(),
           legend.position = 'none'))
-(figS3B <- ggmap(clachan_sat) + 
+(figS4B <- ggmap(clachan_sat) + 
     geom_point(data = gps_wgs_coords %>% filter(name == 'EA49568'), aes(x = X, y = Y), col = '#39A783', size = 0.3) + 
     geom_path(data = gps_wgs_coords %>% filter(name == 'EA49568'), aes(x = X, y = Y), col = '#39A783', size = 0.3) +
     geom_polygon(data = sdf_d_95 %>% filter(id == 'homerange2'), aes(x = long, y = lat, group = group), fill = '#39A783', col = '#39A783', alpha = 0.6) +
@@ -263,12 +305,12 @@ ggsave(figS2, path = 'figs/', filename = 'FIGS2.png', dpi = 300, width = 9, heig
           axis.title = element_blank(),
           legend.position = 'none'))
 
-(figS3 <- plot_grid(figS3A, figS3B, labels = c('A)', 'B)'), label_fontfamily = 'serif', label_size = 10))
-ggsave(figS3, path = 'figs/', filename = 'FIGS3.png', dpi = 300, width = 9, height = 4.5, units = 'in')
+(figS4 <- plot_grid(figS4A, figS4B, labels = c('A)', 'B)'), label_fontfamily = 'serif', label_size = 10))
+ggsave(figS4, path = 'figs/', filename = 'figS4.png', dpi = 300, width = 9, height = 4.5, units = 'in')
 
 #### FIGURE S4 - EA49570.
 
-(figS4A <- ggmap(clachan_sat) + 
+(figS5A <- ggmap(clachan_sat) + 
     geom_point(data = gps_wgs_coords %>% filter(name == 'EA49570'), aes(x = X, y = Y), col = '#3CABD3', size = 0.3) + 
     geom_path(data = gps_wgs_coords %>% filter(name == 'EA49570'), aes(x = X, y = Y), col = '#3CABD3', size = 0.3) +
     geom_polygon(data = sdf_d_50 %>% filter(id == 'homerange3'), aes(x = long, y = lat, group = group), fill = '#3CABD3', col = '#3CABD3', alpha = 0.6) +
@@ -286,7 +328,7 @@ ggsave(figS3, path = 'figs/', filename = 'FIGS3.png', dpi = 300, width = 9, heig
     theme(
           axis.title = element_blank(),
           legend.position = 'none'))
-(figS4B <- ggmap(clachan_sat) + 
+(figS5B <- ggmap(clachan_sat) + 
     geom_point(data = gps_wgs_coords %>% filter(name == 'EA49570'), aes(x = X, y = Y), col = '#3CABD3', size = 0.3) + 
     geom_path(data = gps_wgs_coords %>% filter(name == 'EA49570'), aes(x = X, y = Y), col = '#3CABD3', size = 0.3) +
     geom_polygon(data = sdf_d_95 %>% filter(id == 'homerange3'), aes(x = long, y = lat, group = group), fill = '#3CABD3', col = '#3CABD3', alpha = 0.6) +
@@ -305,12 +347,12 @@ ggsave(figS3, path = 'figs/', filename = 'FIGS3.png', dpi = 300, width = 9, heig
           axis.title = element_blank(),
           legend.position = 'none'))
 
-(figS4 <- plot_grid(figS4A, figS4B, labels = c('A)', 'B)'), label_fontfamily = 'serif', label_size = 10))
-ggsave(figS4, path = 'figs/', filename = 'FIGS4.png', dpi = 300, width = 9, height = 4.5, units = 'in')
+(figS5 <- plot_grid(figS5A, figS5B, labels = c('A)', 'B)'), label_fontfamily = 'serif', label_size = 10))
+ggsave(figS5, path = 'figs/', filename = 'figS5.png', dpi = 300, width = 9, height = 4.5, units = 'in')
 
 #### FIGURE S5 - EA49571.
 
-(figS5A <- ggmap(clachan_sat) + 
+(figS6A <- ggmap(clachan_sat) + 
     geom_point(data = gps_wgs_coords %>% filter(name == 'EA49571'), aes(x = X, y = Y), col = '#E769F1', size = 0.3) + 
     geom_path(data = gps_wgs_coords %>% filter(name == 'EA49571'), aes(x = X, y = Y), col = '#E769F1', size = 0.3) +
     geom_polygon(data = sdf_d_50 %>% filter(id == 'homerange4'), aes(x = long, y = lat, group = group), fill = '#E769F1', col = '#E769F1', alpha = 0.6) +
@@ -328,7 +370,7 @@ ggsave(figS4, path = 'figs/', filename = 'FIGS4.png', dpi = 300, width = 9, heig
     theme(
           axis.title = element_blank(),
           legend.position = 'none'))
-(figS5B <- ggmap(clachan_sat) + 
+(figS6B <- ggmap(clachan_sat) + 
     geom_point(data = gps_wgs_coords %>% filter(name == 'EA49571'), aes(x = X, y = Y), col = '#E769F1', size = 0.3) + 
     geom_path(data = gps_wgs_coords %>% filter(name == 'EA49571'), aes(x = X, y = Y), col = '#E769F1', size = 0.3) +
     geom_polygon(data = sdf_d_95 %>% filter(id == 'homerange4'), aes(x = long, y = lat, group = group), fill = '#E769F1', col = '#E769F1', alpha = 0.6) +
@@ -347,13 +389,13 @@ ggsave(figS4, path = 'figs/', filename = 'FIGS4.png', dpi = 300, width = 9, heig
           axis.title = element_blank(),
           legend.position = 'none'))
 
-(figS5 <- plot_grid(figS5A, figS5B, labels = c('A)', 'B)'), label_fontfamily = 'serif', label_size = 10))
-ggsave(figS5, path = 'figs/', filename = 'FIGS5.png', dpi = 300, width = 9, height = 4.5, units = 'in')
+(figS6 <- plot_grid(figS6A, figS6B, labels = c('A)', 'B)'), label_fontfamily = 'serif', label_size = 10))
+ggsave(figS6, path = 'figs/', filename = 'figS6.png', dpi = 300, width = 9, height = 4.5, units = 'in')
 
-#### RESULTS SECTION 2 - TIME SPENT ACROSS HABITATS ====
+### 6 == HABITAT USE BY ROCK DOVES ####################################
 ## Approach taken here: obtain a dataset of 0.5h periods across all monitoring dates; then check which
-## GPS points happened during which period; for each pigeon, keep the one it spent the most time in.
-# Create a sequence of half an hour slots; this is some of the crudest code ever but works.
+## GPS points happened during which period; for each dove, keep the one it spent the most time in.
+# Create a sequence of half an hour slots
 full_h <- as.data.frame(with(expand.grid(date = as.Date(unique(gps$date)), hour = paste0(0:23, ":00:00")), 
      sort(as.POSIXct(paste(date, hour)))))  # create a dataset of full hours
 colnames(full_h) <- 'start' # call it start as it will be the first value
@@ -390,7 +432,7 @@ gps_int <- gps_int %>% mutate(habitat = recode(habitat, "H21A0 - Machairs" = 'Ma
                                                "H2190 - Humid dune slacks" = 'Dunes',
                                                "Flood swards and related communities" = "Unknown or other"))
 
-# Time spent in habitat; NB: this is a clever pipe.
+# Time spent in habitat.
 time_in_habitat <- gps_int %>%
   group_by(name, date, id, habitat) %>% # for each pigeon, on each day, across each habitat and interval.
   count() %>% # count how many times each pigeon on a given day used which habitats in which interval.
@@ -416,39 +458,22 @@ time_in_habitat <- time_in_habitat %>%
   mutate(prop = n/sum(n))
 
 
-##### FIGURE 2 - Time spent in each habitat 
-## Subplot A, excluding roost sites (also only day hours).
-(fig2a <- ggplot(data = time_in_habitat, aes(x = as.POSIXct(hour, format = "%H:%M:%S"), y = n, fill = habitat)) + 
-  geom_bar(position = 'fill', stat = 'identity') + theme_bw() +
-  xlab('Time of day (half-hour intervals)') + ylab('Proportion of time in habitat') + # note I cut some blocks out below
-  scale_x_datetime(labels = scales::date_format("%H:%M:%S"), limits = c(as.POSIXct('08:30:00', format = "%H:%M:%S"), as.POSIXct('20:00:00', format = "%H:%M:%S"))) +
-    scale_fill_manual(name = '', values = c("Arable land" = "#DDCC77", "Atlantic pasture" = '#CC6677',
-                                 "Machair" = '#117733', "Dunes" = '#6699CC', 'Unknown or other' = '#332288')) +
-  theme(legend.position = 'none',
-        axis.text.x = element_text(size = 10, angle = 90),
-        axis.text.y = element_text(size = 10),
-        axis.title = element_text(size = 10, face = 'bold'),
-        axis.title.x = element_blank(),
-        axis.title.y = element_text(margin = margin(t = 10)),
-        plot.margin = margin(1,0,0,0, 'cm')) +
-    guides(fill = guide_legend(nrow = 2)))
-
-## Subplot B, including roost sites (all day).
+### 7 == FIGURE 3  ###################################
 gps_int_roost <- date_df %>%
   left_join(gps %>% 
               mutate(habitat = ifelse(inroost == 'Y', 'Roost site', gps$habitat)), by = character()) %>% # cross-join add creating roost as a new habitat.
   filter(datetime %within% int) # verify if a timepoint is within an interval.
 
 gps_int_roost <- gps_int_roost %>% mutate(habitat = recode(habitat, "H21A0 - Machairs" = 'Machair', "H2130 - Fixed dunes" = "Dunes",
-                                               "Atlantic Cynosurus-Centaurea pastures" = "Atlantic pasture",
-                                               "H7140 - Transition mires" = "Unknown or other",
-                                               "Unknown" = "Unknown or other",
-                                               "H2120 - Shifting dunes" = "Dunes",
-                                               "Agriculturally-improved, re-seeded and heavily fertilised grassland, including sports fields and grass lawns" = "Arable land",
-                                               "Constructed, industrial and other artificial habitats" = "Unknown or other",
-                                               "Unvegetated sand beaches above the driftline" = "Unknown or other",
-                                               "H2190 - Humid dune slacks" = 'Dunes',
-                                               "Flood swards and related communities" = "Unknown or other"))
+                                                           "Atlantic Cynosurus-Centaurea pastures" = "Atlantic pasture",
+                                                           "H7140 - Transition mires" = "Unknown or other",
+                                                           "Unknown" = "Unknown or other",
+                                                           "H2120 - Shifting dunes" = "Dunes",
+                                                           "Agriculturally-improved, re-seeded and heavily fertilised grassland, including sports fields and grass lawns" = "Arable land",
+                                                           "Constructed, industrial and other artificial habitats" = "Unknown or other",
+                                                           "Unvegetated sand beaches above the driftline" = "Unknown or other",
+                                                           "H2190 - Humid dune slacks" = 'Dunes',
+                                                           "Flood swards and related communities" = "Unknown or other"))
 
 unique(gps_int_roost$habitat)
 
@@ -474,31 +499,66 @@ time_in_habitat_roost <- time_in_habitat_roost %>%
 
 
 ### Actual figure code.
-(fig2b <- ggplot(data = time_in_habitat_roost, aes(x = as.POSIXct(hour, format = "%H:%M:%S"), y = n, fill = habitat)) + 
-  geom_bar(position = 'fill', stat = 'identity') + theme_bw() +
-  xlab('Time of day (half-hour intervals)') + ylab('Proportion of time in habitat') +
-  scale_x_datetime(labels = scales::date_format("%H:%M:%S")) +
+(fig3 <- ggplot(data = time_in_habitat_roost, aes(x = as.POSIXct(hour, format = "%H:%M:%S"), y = n, fill = habitat)) + 
+    geom_bar(position = 'fill', stat = 'identity') + theme_bw() +
+    xlab('Time of day (half-hour intervals)') + ylab('Proportion of time in habitat') +
+    scale_x_datetime(labels = scales::date_format("%H:%M:%S")) +
     scale_fill_manual(name = '', values = c("Arable land" = "#DDCC77", "Atlantic pasture" = '#CC6677', "Roost site" = 'grey',
                                             "Machair" = '#117733', "Dunes" = '#6699CC', 'Unknown or other' = '#332288'))  +
-  theme(legend.position = 'bottom',
-        axis.text.x = element_text(size = 10, angle = 90),
-        axis.text.y = element_text(size = 10),
-        axis.title = element_text(size = 10, face = 'bold'),
-        axis.title.x = element_text(margin = margin(t = 10)),
-        axis.title.y = element_text(margin = margin(t = 10)),
-        legend.text = element_text(size = 9),
-        legend.title = element_text(size = 10, face = 'bold'),
-        plot.margin = margin(1,0,0,0, 'cm')) +
+    theme(legend.position = 'bottom',
+          axis.text.x = element_text(size = 10, angle = 90),
+          axis.text.y = element_text(size = 10),
+          axis.title = element_text(size = 10, face = 'bold'),
+          axis.title.x = element_text(margin = margin(t = 10)),
+          axis.title.y = element_text(margin = margin(t = 10)),
+          legend.text = element_text(size = 9),
+          legend.title = element_text(size = 10, face = 'bold'),
+          plot.margin = margin(1,0,0,0, 'cm')) +
     guides(fill = guide_legend(nrow = 2)))
 
 
-(fig2 <- plot_grid(fig2a, fig2b, rel_heights = c(0.4, 0.6), nrow = 2, labels = c('A) Habitat use without roost site', 
-                                                                                  'B) Habitat use including roost site'), hjust = 0))
+(fig3 <- plot_grid(fig3, labels = c('Habitat use including roost site'), hjust = 0))
 
-ggsave(fig2, path = 'figs/', filename = 'FIG2.png', width = 6, height = 8, units = 'in', dpi = 300)
+ggsave(fig3, path = 'figs/', filename = 'FIG3.png', width = 6, height = 8, units = 'in', dpi = 300)
+### 8 == PIGEON ROOSTING BEHAVIOUR ####################################
+## Describe pigeon roosting behaviour.
 
-#### RESULTS SECTION 3 - DISTANCE FROM ROOST SITE ACROSS DAYS ====
-## Will wants birds that have roosted in the same site on those days.
+## FIRST: identify GPS tracks present at a given roost site.
+where_roost <- gps %>% 
+  filter(inroost == 'Y') %>% # keep in roost observations
+  filter(hour(datetime) > 22 | hour(datetime) < 4) %>% # in night time.
+  group_by(date, name, roost_site) %>% # for each combination of date, name and roost time
+  slice(1) %>% # keep only one
+  dplyr::select(name, date, roost_site)
+
+### 9 == FIGURE 4 -- PIGEON ROOSTING BEHAVIOUR ####################################
+## SECOND: make a map to help identify roosting sites.
+roost_sites <- st_read('bin/roost_sites.gpkg')
+(fig4A <- ggmap(clachan_sat) + xlab('Longitude (°)') + ylab('Latitude (°)') +
+    geom_sf(data = roost_sites %>% st_buffer(40) %>% st_transform(crs = st_crs(4326)), aes(fill = roost_site), inherit.aes = F) +
+    scale_y_continuous(limits = c(57.65,57.68408)) +
+    scale_fill_discrete(name = 'Roost site ID', labels = c('(1) Derelict building', '(2) - Barn',
+                                                           '(3) Derelict building', '(4) Cattle byre')) +
+    coord_sf() +
+    theme(axis.title = element_blank(),
+      legend.position = 'top') + 
+    guides(fill = guide_legend(nrow = 2)))
+
+## THIRD: make a plot of use of each roost site by pigeons.
+(fig4B <- ggplot(data = where_roost, aes(y = as.character(roost_site), x = date)) + 
+    geom_point() + facet_wrap(~name) + theme_bw() +
+    ylab('Roost sites') + xlab('Date') + 
+    theme(panel.spacing = unit(0.5, 'cm')))
+
+(fig4 <- plot_grid(fig4A, fig4B, nrow = 2, labels = c('A)', 'B)')))
+ggsave(fig4, path = 'figs/', filename = 'FIG4.png', dpi = 300)
+
+
+
+### 9 == DISTANCE FROM ROOST ACROSS DAYS ####################################
+## This section calculates distances from roost; including same roost, total morning roost, total night roost.
+### FIRST: same roost calculations; distance from roost for birds that have used the same roost in the morning and at night. 
+## Identify the gps fixes on days on which those conditions are met. 
 same_roost <- gps %>% 
   dplyr::select(name, datetime, date, inroost, roost_site) %>% # keep only useful columns
   arrange(datetime) %>% # arrange by time.
@@ -507,26 +567,12 @@ same_roost <- gps %>%
   filter(inroost == 'Y') %>% 
   mutate(test = roost_site == lag(roost_site, default = NA)) %>%
   ungroup() %>%
-  filter(test == TRUE) %>% # I will be honest; i forgot what each step does.
+  filter(test == TRUE) %>%
   dplyr::select(name,date,roost_site)
 
 same_roost %>% st_drop_geometry() %>% group_by(name) %>% count() # how much data is there?
 
-# Also interesting - not same roost.
-## Code as above but keeping the birds that went to a different place.
-not_same_roost <- gps %>% dplyr::select(name, datetime, date, inroost, roost_site) %>%
-  arrange(datetime) %>% 
-  group_by(name, date) %>% 
-  slice(c(1,n())) %>%
-  filter(inroost == 'Y') %>% 
-  mutate(test = roost_site == lag(roost_site, default = NA)) %>%
-  ungroup() %>%
-  filter(test == FALSE) %>% 
-  dplyr::select(name,date)
-
-not_same_roost %>% st_drop_geometry() %>% group_by(name) %>% count() 
-
-# Calculate distance from roost.
+## Calculate the distance from roost; same roost situation
 pigeon_names <- unique(same_roost$name) # select pigeon names.
 roost_sites <- st_read('bin/roost_sites.gpkg') # read in the shapefile of roost sites
 dist_to_roost_df <- data.frame() # data frame to store results.
@@ -568,48 +614,21 @@ avg_dist_to_roost <- dist_time %>%
   group_by(hour) %>%
   mutate(total_mean_dist = mean(mean_dist))
 
-(fig3 <- ggplot(data = avg_dist_to_roost %>% filter(name != 'EA49570'), aes(x = as.POSIXct(hour, format = "%H:%M:%S"), y = mean_dist, col = name)) + 
-  geom_line() + geom_point() +
-  geom_line(data = avg_dist_to_roost %>% filter(name != 'EA49570'),
-            aes(x = as.POSIXct(hour, format = "%H:%M:%S"), y = total_mean_dist), col = 'black', linewidth = 1.5, alpha = 0.5, inherit.aes = F) +
-  scale_x_datetime(labels = scales::date_format("%H:%M:%S")) +
-  scale_color_discrete(name = 'Dove ID') + theme_bw() +
-  xlab('Time of day (half-hour intervals)') + ylab('Mean distance from night roost (m)') +
-  theme(legend.position = 'bottom'))
+### 10 == FIGURE 5 - Average distance from night roost (m); same roost on morning and evening. ####################################
+(fig5 <- ggplot(data = avg_dist_to_roost, aes(x = as.POSIXct(hour, format = "%H:%M:%S", tz = 'GMT'), y = mean_dist, col = name)) + 
+   geom_line(alpha = 0.7, linetype = 'dashed') + geom_point(alpha = 0.7, size = 1) +
+   geom_line(data = avg_dist_to_roost,
+             aes(x = as.POSIXct(hour, format = "%H:%M:%S", tz = 'GMT'), y = total_mean_dist), col = 'black', linewidth = 1.5, inherit.aes = F) +
+   scale_x_datetime(labels = scales::date_format("%H:%M:%S", tz = 'GMT', locale = '')) +
+   scale_color_discrete(name = 'Dove ID') + theme_bw() +
+   xlab('Time of day (half-hour intervals)') + ylab('Mean distance from night roost (m)') +
+   theme(legend.position = 'bottom'))
 
-ggsave(fig3, path = 'figs/', filename = 'FIG3.png', dpi = 300)
-  
-##### PIGEON ROOSTING BEHAVIOURS ====
-### Where do pigeons spend the night?
-where_roost <- gps %>% 
-  filter(inroost == 'Y') %>% # keep in roost observations
-  filter(hour(datetime) > 22 | hour(datetime) < 4) %>% # in night time.
-  group_by(date, name, roost_site) %>% # for each combination of date, name and roost time
-  slice(1) %>% # keep only one
-  dplyr::select(name, date, roost_site)
+ggsave(fig5, path = 'figs/', filename = 'FIG5.png', dpi = 300)
 
-### Make a map to help locate these.
-roost_sites <- st_read('bin/roost_sites.gpkg')
-(fig4A <- ggmap(clachan_sat) + xlab('Longitude (°)') + ylab('Latitude (°)') +
-    geom_sf(data = roost_sites %>% st_buffer(40) %>% st_transform(crs = st_crs(4326)), aes(fill = roost_site), inherit.aes = F) +
-    scale_y_continuous(limits = c(57.65,57.68408)) +
-    scale_fill_discrete(name = 'Roost site ID', labels = c('(1) Derelict building', '(2) - Barn',
-                                                           '(3) Derelict building', '(4) Cattle byre')) +
-    coord_sf() +
-    theme(axis.title = element_blank(),
-      legend.position = 'top') + 
-    guides(fill = guide_legend(nrow = 2)))
 
-## Make the plot of use of roosting sites
-(fig4B <- ggplot(data = where_roost, aes(y = as.character(roost_site), x = date)) + 
-    geom_point() + facet_wrap(~name) + theme_bw() +
-    ylab('Roost sites') + xlab('Date') + 
-    theme(panel.spacing = unit(0.5, 'cm')))
-
-(fig4 <- plot_grid(fig4A, fig4B, nrow = 2, labels = c('A)', 'B)')))
-ggsave(fig4, path = 'figs/', filename = 'FIG4.png', dpi = 300)
-
-#### PIGEON ASSOCIATIONS =====
+#### 11 == PIGEON ASSOCIATIONS ####################################
+## Explore whether pigeons associate with individuals from the same roost sites
 ## We need 15 minute windows for this analysis so back to the crude hour methods.
 # Create a sequence of 15min slots slots; this is some of the crudest code ever but works.
 full_h1 <- as.data.frame(with(expand.grid(date = as.Date(unique(gps$date)), hour = paste0(0:23, ":00:00")), 
@@ -700,25 +719,17 @@ total_obs <- total_obs %>% left_join(asso_totals, by = 'name') %>% mutate(alone 
 
 asso_summ <- rbind(asso_summ, total_obs)
 
-### FIGURE 5 - how do pigeons associate with each other?
+#### 12 == FIGURE S7 - Pigeon associations ####################################
 
-(fig5alt <- ggplot(data = asso_summ, aes(x = name, y = n, fill = other)) +
+(fig4 <- ggplot(data = asso_summ, aes(x = name, y = n, fill = other)) +
     geom_bar(position="fill", stat="identity") +
     xlab('Dove ID') + ylab('Proportion of time intervals') + theme_bw() + 
     scale_fill_manual(name = 'Associating with',values = c('alone' = 'grey', 'EA49571' = '#E769F1', 'EA49570' = '#3CABD3', 'EA49568' = '#39A783', 'EA49503' = '#98993C', 'EA49502' = '#f8756d'),
                       labels = c('Not-associated', 'EA49502', 'EA49503', 'EA49568', 'EA49570', 'EA49571')) +
     ggtitle('Proportion of 15-minute time intervals \nby association between tagged Rock Doves') +
     theme(legend.position = 'bottom'))
-ggsave(fig5alt, path = 'figs/', filename = 'FIG5.png', width = 5, unit = 'in',  dpi = 300)
+ggsave(fig4, path = 'figs/', filename = 'FIG4.png', width = 5, unit = 'in',  dpi = 300)
 
-
-(fig5 <- ggplot(data = asso, aes(x = name, y = other)) + geom_count() +
-  xlab('Dove ID') + ylab('Dove ID') + theme_bw() + 
-    ggtitle('No. of fixes where two doves were\nwithin 20m of each other a in 15-minutes interval') +
-  theme(legend.position = 'bottom'))
-
-ggsave(fig5, path = 'figs/', filename = 'FIG56.png', dpi = 300)
-  
 
 ### Number of 15 min intervals with more than 2 pigeons anywhere mins anywhere.
 f <- gps_fix_15 %>% st_drop_geometry %>% 
@@ -729,221 +740,3 @@ g <- asso %>% st_drop_geometry() %>%
   group_by(int) %>% count() %>% filter(n >= 2) ## number of rows here is the answer.
 nrow(g)
 
-################################ DANGER ZONE CODE BELOW IS OBSOLETE BUY MAY BE USEFUL ====================
-
-pigeon_df <- gps_fix_15 %>% filter(name == pigeon) %>% dplyr::select(name, datetime, int, id, habitat) %>%
-  mutate()
-
-
-for (i in 1:length(names)) {
-  pigeon <- names[i]
-  pigeon_ints <- gps_fix_15[gps_fix_15$name == pigeon,]$int
-  for (j in 1:length(pigeon_ints)) {
-    int1 <- pigeon_ints[i]
-    tmp1 <- gps_fix_15 %>% filter(name == pigeon & datetime %within% int1) %>% 
-      dplyr::select(name, datetime, id, habitat) %>% st_buffer(dist = 20)
-    tmp2 <- gps_fix_15 %>% filter(name != pigeon & datetime %within% int1) %>%
-      dplyr::select(name, datetime, id, habitat) %>% st_buffer(dist = 20)
-    st1 <- st_intersection(tmp1, tmp2) %>% rename('ot_name' = 'name.1', 'ot_datetime' = 'datetime.1') %>%
-      dplyr::select(name, datetime, id, habitat, ot_name, ot_datetime)
-    asso_fix_15 <- rbind(asso_fix_15, st1)
-  }
-}
-
-
-
-
-
-
-
-
-
-
-
-asso <- gps_int %>% left_join(hours, by = 'id')
-
-t <- asso %>% group_by(hour, name) %>% count()
-ggplot(data = t, aes(x = as.POSIXct(hour, format = "%H:%M:%S"), y = n, col = name)) + geom_line() +
-  scale_x_datetime(labels = scales::date_format("%H:%M:%S"))
-
-### Calculate distance from roost.
-roost_dist <- as.data.frame(st_distance(gps_hab, roost_sites))
-roost_dist <- drop_units(roost_dist)
-colnames(roost_dist) <- c('roost1', 'roost2', 'roost3', 'roost4')
-roost_dist_df <- cbind(gps_hab, roost_dist) %>% pivot_longer(roost1:roost4, names_to = 'roost_id', values_to = 'roost_dist')
-library(units)
-ggplot(data = roost_dist_df, aes(x = hour(time), y = roost_dist, col = roost_id)) + geom_line() + facet_wrap(~name)
-
-### Distance from morning roost.
-
-day_roost <- gps %>%
-  filter(inroost == "Y", hour(datetime) < 8) %>%
-  group_by(date, name) %>%
-  arrange(desc(datetime)) %>%
-  slice(1) %>%
-  ungroup() %>%
-  select(name, date, time, datetime, roost_site)
-
-test_df <- gps_hab 
-date_df <- test_df %>% select(date) %>% st_drop_geometry() %>% distinct()
-name_vec <- gps_hab %>% st_drop_geometry() %>% select(name) %>% distinct()
-
-dist_df <- data.frame()
-
-for (i in 1:length(date_df$date)) {
-  for (j in 1:length(name_vec$name)) {
-    dat <- date_df$date[i]
-    nam <- name_vec$name[j]
-    postroost <- test_df %>% filter(date == dat, name == nam)
-    roost <- day_roost %>% filter(date == dat, name == nam) %>% select(roost_site) %>% st_drop_geometry() 
-    if (nrow(roost) == 0 || nrow(postroost) == 0) {
-      next
-    }
-    site <- roost_sites %>% filter(roost_site == roost$roost_site)
-    dist_to_roost <- as.data.frame(st_distance(postroost, site))
-    tmp <- data.frame(name = nam,
-                      date = dat,
-                      time = postroost$time,
-                      dist = dist_to_roost) %>% distinct()
-    
-    colnames(tmp) <- c('name', 'date', 'time', 'dist')
-    dist_df <- rbind(dist_df, tmp)
-  }
-}
-
-dist_df$dist <- drop_units(dist_df$dist)
-dist_df_avg <- dist_df %>% mutate(hour = hour(time)) %>% group_by(hour, name) %>%
-  summarise(mean_dist = mean(dist))
-dist_df_avg_all <- dist_df %>% mutate(hour = hour(time)) %>% group_by(hour) %>% summarise(mean_dist = mean(dist))
-
-ggplot() + geom_line(data = dist_df_avg, aes(x = hour, y = mean_dist, col = name)) +
-  geom_point(data = dist_df_avg, aes(x = hour, y = mean_dist, col = name)) +
-  geom_line(data = dist_df_avg_all, aes(x = hour, y = mean_dist), col = 'black', size = 2) +
-  geom_point(data = dist_df_avg_all, aes(x = hour, y = mean_dist), col = 'black', size = 2)
-
-time_in_habitat_roost$id <- as.numeric(time_in_habitat_roost$id)
-hours <- date_df %>% select(start, id) %>%
-  mutate(hour = paste(format(as.POSIXct(start), format = "%H:%M:%S"))) %>%
-  select(hour, id) %>%
-  unique()
-time_in_habitat_roost <- left_join(time_in_habitat_roost, hours, by = 'id')
-
-
-# Calculate proportion of time spent in a given habitat category, with no roost sites.
-time_spent_noroost <- gps %>% filter(inroost == 'N') %>% 
-  mutate(hour = hour(datetime)) %>% arrange(name, datetime)
-
-hours <- unique(time_spent_noroost$hour)
-tmp1 <- time_spent_noroost[1:100,] %>% select(name, habitat, datetime) %>% mutate(hour = hour(datetime)) 
-td <- tmp1 %>% mutate(diff = datetime - lag(datetime)) %>% replace(is.na(.), 0)
-complete_hours <- expand.grid(datetime = seq(min(tmp1$datetime), max(tmp1$datetime), by = "hour"))
-
-# Merge the complete sequence with your data frame
-merged_data <- complete_hours %>%
-  left_join(tmp1, by = "datetime") %>%
-  arrange(datetime)
-
-# Fill in missing values in 'name' and 'habitat' columns
-merged_data <- merged_data %>%
-  fill(name, habitat, .direction = "down")
-
-# Fill in missing values in 'hour' column
-merged_data$hour <- ifelse(is.na(merged_data$hour), hour(merged_data$datetime), merged_data$hour)
-
-# Calculate the time difference ('diff') column
-merged_data <- merged_data %>%
-  mutate(diff = difftime(lead(datetime), datetime, units = "mins"))
-
-# Remove the last row as it will have NA values
-merged_data <- merged_data[1:(nrow(merged_data) - 1), ]
-
-
-std <- td %>% group_by(habitat) %>% summarise(sum_diff = sum(diff))
-
-unique(tmp1$habitat)
-
-mutate(habitat = case_when(
-  habitat == "H21A0 - Machairs" ~ 1,
-  habitat == "H2130 - Fixed dunes" ~ 2,
-  habitat == "H2120 - Shifting dunes" ~ 3,
-  habitat == "Arable land" ~ 4,
-  habitat == "Atlantic Cynosurus-Centaurea pastures" ~ 5
-))
-
-
-  
-tmp1 %>% select(name, hour, datetime, habitat) %>% st_drop_geometry() %>% print(1:20) 
-  
-  df %>%
-  arrange(category, randtime) %>%
-  group_by(category) %>%
-  mutate(diff = randtime - lag(randtime),
-         diff_secs = as.numeric(diff, units = 'secs'))
-
-test <- gps %>% mutate(hour = hour(datetime))
-
-rmhours <- gps %>% mutate(hour = hour(datetime)) %>% filter(inroost == 'N') %>%
-  group_by(hour) %>% summarise(n = n()) %>% dplyr::select(hour)
-hours <- as.integer(hours$hour)
-
-
-ggplot(data = time_spent_noroost, aes(x = hour, y = time_spent, fill = habitat)) + 
-  geom_bar(stat = 'identity', position = 'fill') + theme_bw() +
-  scale_fill_discrete(labels = c('Improved grassland', 'Arable land', expression('Atlantic'~italic(Cynosurus-Centaurea)~'pastures'),
-                                 'Artificial sites', 'Flood sward', 'Shifting dunes', 'Fixed dunes', 'Humid dune slacks',
-                                 'Machair', 'Transition mires', 'Unvegetated beaches')) +
-         theme(legend.position = 'bottom') 
-
-
-#### RESULTS SECTION 1 - GENERAL STATISTICS REGARDING POINTS ====
-
-## How many tracking days do we have across pigeons?
-gps %>% st_drop_geometry() %>% group_by(name) %>%
-  summarize(start_date = min(date), end_date = max(date)) %>%
-  mutate(date_range = end_date - start_date) %>%
-  print() %>%
-  summarise(mean = mean(date_range), sd = sd(date_range))
-
-
-
-
-
-### Will wants birds that go to same site morng and evening
-
-
-### Return to any roost site
-
-ggplot(data = gps_hab, aes(x = hour(datetime), fill = name)) + geom_bar()
-
-test_any_roost <- gps_hab %>% select(name, date, time, datetime) %>%
-  st_distance(roost_sites) %>% as.data.frame() %>%
-  cbind(gps_hab %>% select(name, date, time, datetime) %>% st_drop_geometry()) %>%
-  pivot_longer(V1:V4, names_to = 'roost_site', values_to = 'dist') %>%
-  mutate(dist = drop_units(dist)) %>% mutate(hour = hour(time)) %>%
-  group_by(name, roost_site, hour) %>% summarise(mean_dist = mean(dist))
-
-ggplot(data = test_any_roost, aes(x = hour, y = mean_dist, col = name)) + geom_point() + geom_line() + facet_wrap(~roost_site)
-
-# Plot the bar graph
-ggplot(test_prob, aes(x = name, y = total_time_spent, fill = HABITAT_NA)) +
-  geom_bar(stat = "identity", position = 'fill') +
-  labs(title = "Proportion of Time Spent in Each Habitat",
-       x = "Habitat",
-       y = "Proportion of Time Spent") +
-  theme_minimal()
-
-ggplot(data = test_prob, aes(x = HABITAT_NA, fill = name)) + geom_bar() +
-  theme(axis.text.x = element_text(angle = 90))
-
-tm_shape(clachan) + tm_fill() + tm_shape(gps) + tm_dots() 
-
-## How much data do we have per individual?
-data_count <- gps %>% group_by(date, name) %>% summarise(n = n()) %>% st_drop_geometry()
-ggplot(data = data_count, aes(x = date, y = n, col = name)) + geom_line()
-
-### Map of of behaviour per bird
-library(rnaturalearth)
-north_uist <- ne_download(scale = 10, type = 'land', category = 'physical') %>% st_as_sf(crs = st_crs(4326)) %>%
-  st_crop(xmin = -7.580566, ymin = 57.498855, xmax = -7.014771, ymax = 57.724686)
-
-### Need to classify roost sites etc.

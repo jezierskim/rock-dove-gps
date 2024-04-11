@@ -12,17 +12,6 @@ library(raster)
 library(tmap)
 
 
-############ PATCH TOGETHER THE RAW DATA ====
-
-pigeon_names <- data.frame(id = c("4039","5ff1","62d0","7e51","ac8e"),
-                           name = c('EA49571', 'EA49502', 'EA49570', 'EA49503', 'EA49568'))
-
-gps_data <- list.files('Raw_GPS_Data/', full.names = T)
-
-read_csv(gps_data) %>% mutate(id = str_sub(UUID, start = -4)) %>% left_join(pigeon_names, by = 'id') %>%
-  write_csv('gps_folder/gps_dataset.csv')
-
-
 ############ DATA FILTERING AND ORGANISING THE DATASET ====
 
 ## Main filtering stage to remove dodgy observations; keeps 4,043 out of 5,937 observations.
