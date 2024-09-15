@@ -1,1 +1,29 @@
-d
+This folder contains most data files used for the running of code associated with the manuscript 'Use of anthropogenic landscapes in a wild Rock Dove Columba livia population' submitted to Ornithology. Some data files are not included due to copyright (map data).
+
+gps_dataset.csv - core data file containing raw data as provided by tags. Columns included are:
+name	- Dove ID
+date	- date of GPS fix
+time	- time of GPS fix in Warsaw time
+lon	- longitude of GPS fix (degrees)
+lat	- latitude of GPS fix (degrees)
+alt	- altitude of tag (meters)
+alt(ellipsoid)	- alternative estimate of altitude of tag (meters)
+speed	- estimated tag speed (m/s)
+course	- angular course of movement
+satused	- number of satellites used
+posmode	- positional mode
+horaccuracy - horizontal accuracy of the GPS fix
+veraccuracy - vertical accuracy of the GPS fix	
+hdop - horizontal DOP estimate
+vdop - vertical DOP estimate
+temp - temperature (degrees Celsius)
+lightint - tag light intensity estimate (lumen)
+
+filtered_gps_dataset.gpkg - above dataset after filtering and conversion to gpkg.
+filtered_gps_dataset.gpkg - the above dataset after addition of habitat data.
+Rock Dove, Jezierski&Smith, Outer Hebrides(1).csv - data for ctmm in Movebank standard format.
+roost_sites.gpkg - the shape file of roost sites in the study system.
+
+Files: British_Isles_map.gpkg; clachan_base.gpkg; clachan_habitat.gpkg; clachan_new_habitat.gpkg; sat_map_clachan.Rdata are not shared as we are not owners of the original data used for them.
+
+Map data can be obtained from Google (sat_map_clachan.Rdata); NatureScot (clachan_habitat.gpkg; clachan_new_habitat.gpkg); or NaturalEarth
