@@ -47,7 +47,7 @@ clachan_hab <- st_read('Habitat_Map_of_Scotland_UIST.gpkg') %>% # from Nature Sc
 
 ### Obtain satellite base map (NB: this uses horrible ggmap with no proper crsing; difficult to work with).
 library(ggmap)
-register_google(key = 'AIzaSyA0XK5mlbxJpGsM0Bj55CRq-emtNKAESpw') # needs a paid-for API key
+register_google() # needs a paid-for API key
 lon <- c(-7.280598, -7.207275) # define longitude of the region
 lat <- c(57.65647, 57.67809) # define latitude of the region
 points <- st_coordinates(gps) # make them coordinates
